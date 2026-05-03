@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: mel-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: mel_database
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - mel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MEL Pipeline (Python ETL)
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    container_name: mel-pipeline
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: mel_database
+      KOBO_API_TOKEN: ${KOBO_API_TOKEN}
+      SENDER_EMAIL: ${SENDER_EMAIL}
+      SENDER_PASSWORD: ${SENDER_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./pipeline:/app
+      - ./logs:/app/logs
+    networks:
+      - mel-network
+    # Run pipeline daily at 6 AM
+    command: python3 /app/scheduler.py
+
+  # Metabase Dashboard (Optional, if not using Google Looker Studio)
+  metabase:
+    image: metabase/metabase:latest
+    container_name: mel-metabase
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: mel_database
+      MB_DB_PORT: 5432
+      MB_DB_USER: postgres
+      MB_DB_PASS: ${DB_PASSWORD:-changeme}
+      MB_DB_HOST: postgres
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+    volumes:
+      - metabase_data:/metabase-data
+    networks:
+      - mel-network
+
+volumes:
+  postgres_data:
+  metabase_data:
+
+networks:
+  mel-network:
+    driver: bridge
